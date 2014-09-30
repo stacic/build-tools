@@ -46,9 +46,6 @@ var WP8BuildSpecifics = function(DPO) {
 	//build mobilespec in visual studio
 	if (settings.MOBILESPEC)
 	{
-		//register www files
-		addWWWForMobileSpec(DPO.MOBILESPEC_DIR, DPO.PROJECT_NAME+'.csproj');
-
 		tests.reportStatus(shelljs.exec('msbuild' + ' ' + path.join(DPO.MOBILESPEC_DIR, DPO.PROJECT_NAME +'.sln') + ' ' +'/p:Configuration=Release', {silent:false}).code == 0);
 	}
 

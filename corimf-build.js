@@ -117,6 +117,8 @@ var RunPreliminaryTests = function(platformSpecificCode) {
     repos = settings.PLUGINS.concat(settings.PLATFORM_REPO);
     if (settings.PLUGMAN_REPO.length > 0)
         repos = repos.concat(settings.PLUGMAN_REPO);
+	// We will also need these platform-independent repos
+	repos = repos.concat(['cordova-js', 'cordova-mobile-spec', 'cordova-plugin-test-framework']);
 
     // If not building project only, git-archive the branch that is desired
     if(!settings.PROJECT_ONLY) {
@@ -151,6 +153,7 @@ var RunPreliminaryTests = function(platformSpecificCode) {
             shelljs.cd('..');
         }
     }
+    // If not building project only, make sure that the branch matches the latest tag in Git
     // If not building project only, make sure that the branch matches the latest tag in Git
     else {
         for (var i = 0; i < repos.length; i++) {
@@ -191,6 +194,18 @@ var RunPreliminaryTests = function(platformSpecificCode) {
         shelljs.cd('..');
     }
 
+	// run npm install in cordova-js before cd'ing back into main directory where script was ran
+	console.log('Loading pre-reqs for js...');
+	shelljs.cd('cordova-js');
+	if (shelljs.test('-d', 'node_modules')) {
+		execOutput = shelljs.rm('-rf', 'node_modules');
+		console.log('true');
+	} else console.log('false');
+	reportStatus((execOutput = shelljs.exec('npm install', {silent:true})).code == 0, execOutput.output);
+	console.log('Running grunt in the cordova.js directory...');
+	reportStatus(shelljs.exec('grunt', {silent:true}).code == 0);
+	shelljs.cd('..');
+
     shelljs.cd(cwd);
 
     // Android has code that must be run before build starts
@@ -207,6 +222,7 @@ var BuildProject = function(platformSpecificCode) {
     var MOBILESPEC_DIR = 'mobilespec-' + platform + '-' + settings.NEW_TAG;
     var PROJECT_NAME = platform === "wp8" ? 'WPCordovaClassLib' : 'example';
     var pathProject = pathCorimf + path.sep + PROJECT_DIR;
+	var pathMobileSpec = pathCorimf + path.sep + MOBILESPEC_DIR;
     var pathSnapshot = tmpDir + path.sep + SNAPSHOT_DIR;
 
     console.log('Checking that project ' + PROJECT_DIR + ' does not exist yet...');
@@ -242,8 +258,59 @@ var BuildProject = function(platformSpecificCode) {
         console.log('Checking that project ' + MOBILESPEC_DIR + ' does not exist yet...');
         reportStatus(!shelljs.test('-d', MOBILESPEC_DIR));
 
-        shelljs.cp('-R', path.join(PROJECT_DIR,'*'), MOBILESPEC_DIR);
-        shelljs.cp('-Rf', path.join(process.cwd(),'cordova-mobile-spec','*'), path.join(MOBILESPEC_DIR, WWW_DIR));
+        console.log('Creating a new ' + platform.toUpperCase() + ' Project...');
+        cmd = execPath + ' ' + MOBILESPEC_DIR + ' ' + PROJECT_NAME + ' ' + PROJECT_NAME;
+        tests.reportStatus(shelljs.exec(cmd, {silent : false}).code == 0);
+
+        console.log('Copying mobile-spec resources into project www...');
+        shelljs.cp("-rf", path.join(tmpDir, 'cordova-mobile-spec', 'www', '*'), path.join(MOBILESPEC_DIR, WWW_DIR));
+
+        // copy config.xml
+		shelljs.cp("-f", path.join(tmpDir, 'cordova-mobile-spec', "config.xml"), MOBILESPEC_DIR);
+
+		//copy and rename cordova.js
+		console.log('Adding cordova.js...');
+		var jsSrc = path.join(tmpDir, 'cordova-js', 'pkg', 'cordova.' + (platform === 'wp8' ? 'windowsphone' : platform) + '.js');
+        shelljs.cp("-f", jsSrc, path.join(MOBILESPEC_DIR, 'www', 'cordova.js')); 
+
+		console.log('Installing plugins into project...');
+		var pathPlugman = path.join(pathCorimf, settings.PLUGMAN_REPO, 'main.js');
+		var baseCommand = 'node ' + pathPlugman  + ' --debug install --platform ' + platform + ' --project ' + pathMobileSpec + ' --plugin ';
+
+		// console.log('Installing core plugins...');
+		for (var i = 0; i < settings.PLUGINS.length; i++) {
+			var execCommand = baseCommand + tmpDir + path.sep + settings.PLUGINS[i];
+			reportStatus((execOutput = shelljs.exec(execCommand, {silent:true})).code == 0, execOutput.output);
+		}
+
+		var majorBranchNum = Number(settings.BRANCH.substring(0,3));
+
+		if (majorBranchNum >= 3.0) {
+			// Install echo and whitelist plugins
+			console.log('Installing echo and whitelist...');
+
+			var execCommand = baseCommand + path.join(tmpDir, 'cordova-mobile-spec', 'cordova-plugin-whitelist');
+			reportStatus((execOutput = shelljs.exec(execCommand, {silent:true})).code == 0, execOutput.output);
+
+			execCommand = baseCommand + path.join(tmpDir, 'cordova-mobile-spec', 'cordova-plugin-echo');
+			reportStatus((execOutput = shelljs.exec(execCommand, {silent:true})).code == 0, execOutput.output);
+		}
+
+		if (majorBranchNum >= 3.6) {
+			// Install plugin-test-framework and the test plugins
+			console.log('Installing new-style plugin tests...');
+
+			var execCommand = baseCommand + tmpDir + path.sep + 'cordova-plugin-test-framework';
+			shelljs.exec(execCommand, {silent:true});
+
+			for (var i = 0; i < settings.PLUGINS.length; i++) {
+				var potentialPlugin = path.join(settings.PLUGINS[i], 'tests');
+				if (fs.existsSync(potentialPlugin)) {
+					var testsCommand = baseCommand + tmpDir + path.sep + potentialPlugin;
+					reportStatus(shelljs.exec(testsCommand, {silent:true}).code == 0);
+				}
+			}
+		}
     }
 
     //Execute platform specific code to populate SNAPSHOT_DIR, moving needed files & directories into SNAPSHOT_DIR
